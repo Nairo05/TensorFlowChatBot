@@ -54,6 +54,42 @@ def acceptable(data):
     else:
         return True
 
+def transaction_bldr(sql):
+    global sql_transaction
+    sql_transaction.append(sql)
+    if len(sql_transaction) > 1000:
+        c.executemany('BEGIN TRANSACTION')
+        for s in sql_transaction:
+            try:
+                c.execute(s)
+            except:
+                pass
+            connection.commit()
+            sql_transaction = []
+
+def sql_insert_replace_comment(commentid,parentid,parent,comment,subreddit,time,score):
+    try:
+        sql = """UPDATE parent_reply SET parent_id = ?, comment_id = ?, parent = ?, comment = ?, subreddit = ?, unix = ?, score = ? WHERE parent_id =?;""".format(parentid, commentid, parent, comment, subreddit, int(time), score, parentid)
+        transaction_bldr(sql)
+    except Exception as e:
+        print('s-UPDATE insertion',str(e))
+
+def sql_insert_has_parent(commentid, parentid, parent, comment, subreddit, time, score):
+    try:
+        sql = """INSERT INTO parent_reply (parent_id, comment_id, parent, comment, subreddit, unix, score) VALUES ("{}","{}","{}","{}","{}",{},{});""".format(
+            parentid, commentid, parent, comment, subreddit, int(time), score)
+        transaction_bldr(sql)
+    except Exception as e:
+        print('s-PARENT insertion', str(e))
+
+def sql_insert_no_parent(commentid, parentid, comment, subreddit, time, score):
+    try:
+        sql = """INSERT INTO parent_reply (parent_id, comment_id, comment, subreddit, unix, score) VALUES ("{}","{}","{}","{}",{},{});""".format(
+            parentid, commentid, comment, subreddit, int(time), score)
+        transaction_bldr(sql)
+    except Exception as e:
+        print('s-NO_PARENT insertion', str(e))
+
 
 if __name__ == '__main__':
     create_table()
@@ -63,7 +99,6 @@ if __name__ == '__main__':
     # file location here f.e. "J:/chatdata/reddit_data/{}/RC_{}".format(timeframe.split('-')[0], timeframe)
     with open("../datasets/reddit_data/{}/RC_{}".format(timeframe.split('-')[0], timeframe), buffering=1000) as f:
         for row in f:
-            print(row)
             row_counter += 1
             row = json.loads(row)
             parent_id = row['parent_id']
@@ -71,14 +106,24 @@ if __name__ == '__main__':
             created_utc = row['created_utc']
             score = row['score']
             subreddit = row['subreddit']
-
+            comment_id = row['name']
             parent_data = find_parent(parent_id)
 
 
 
             if score >= 2:
-                existing_comment_score = find_existing_score(parent_id)
-                if existing_comment_score:
-                    if score > existing_comment_score:
-                        print("sd")
+                if acceptable(body):
+                    existing_comment_score = find_existing_score(parent_id)
+                    if existing_comment_score:
+                        if score > existing_comment_score:
+                            sql_insert_replace_comment(comment_id, parent_id, parent_data, body, subreddit, created_utc, score)
 
+                    else:
+                        if parent_data:
+                            sql_insert_has_parent(comment_id, parent_id, parent_data, body, subreddit, created_utc, score)
+                            paired_rows += 1
+                        else:
+                            sql_insert_no_parent(comment_id, parent_id, body, subreddit, created_utc, score)
+
+            if row_counter % 100000 == 0:
+                print("Total rows read: {}, Paired rows: {}, Time: {}".format(row_counter, paired_rows, str(datetime.now())))
